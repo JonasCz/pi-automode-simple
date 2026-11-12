@@ -232,7 +232,8 @@ function makeHarness(opts: { hasUI?: boolean; key?: string | undefined; branch?:
 				return h.confirmAnswer;
 			},
 			notify: (m) => h.notes.push(m),
-			setStatus: (_k, t) => h.statuses.push(t),
+			// Spy only: the extension must never set a status entry.
+			...({ setStatus: (_k: string, t?: string) => h.statuses.push(t) } as object),
 		},
 		sessionManager: { getBranch: () => h.branch },
 		modelRegistry: { getApiKeyForProvider: async () => key },
@@ -312,7 +313,7 @@ describe("tool_call hook", () => {
 		const h = makeHarness();
 		h.responses.push({ status: 200, body: danger(0.05) });
 		await h.toolCall("bash", { command: "ls" });
-		assert.match(String(h.statuses.at(-1)), /auto: on · bash allowed · risk 5%/);
+		assert.deepEqual(h.statuses, [], "no status bar entry");
 		const out = (await h.toolResult("bash", [{ type: "text", text: "a\nb" }])) as { content: unknown[] };
 		assert.deepEqual(out.content, [
 			{ type: "text", text: "a\nb" },
@@ -454,13 +455,12 @@ describe("/automode command", () => {
 		assert.equal(h.fetchCalls.length, 0);
 		assert.equal(h.confirms.length, 1);
 		assert.match(h.confirms[0].message, /auto mode is off/);
-		assert.match(String(h.statuses.at(-1)), /^auto: off/);
 
 		await h.commands.get("automode")!("on", h.ctx);
 		assert.equal(await h.toolCall("bash", { command: "ls" }), undefined);
 		assert.equal(h.fetchCalls.length, 1);
 		assert.equal(h.confirms.length, 1);
-		assert.match(String(h.statuses.at(-1)), /^auto: on/);
+		assert.deepEqual(h.statuses, []);
 	});
 
 	it("persists via appendEntry and restores on session_start", async () => {
@@ -470,14 +470,15 @@ describe("/automode command", () => {
 
 		const fresh = makeHarness({ branch: h.branch });
 		await fresh.fire("session_start");
-		assert.match(String(fresh.statuses.at(-1)), /^auto: off/);
 		await fresh.toolCall("bash", { command: "ls" });
 		assert.equal(fresh.fetchCalls.length, 0);
 		assert.equal(fresh.confirms.length, 1);
 
 		fresh.branch = [];
 		await fresh.fire("session_switch");
-		assert.match(String(fresh.statuses.at(-1)), /^auto: on/);
+		await fresh.toolCall("bash", { command: "ls" });
+		assert.equal(fresh.fetchCalls.length, 1, "restored to on");
+		assert.deepEqual(fresh.statuses, []);
 	});
 
 	it("reports status", async () => {

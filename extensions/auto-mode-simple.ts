@@ -29,7 +29,6 @@ export interface HostContext {
 	ui?: {
 		confirm?(title: string, message: string, opts?: { signal?: AbortSignal }): Promise<boolean>;
 		notify?(message: string, type?: string): void;
-		setStatus?(key: string, text: string | undefined): void;
 	};
 	sessionManager?: {
 		getBranch?(): SessionEntry[];
@@ -315,7 +314,6 @@ export function createAutoModeSimple(deps: { fetch?: typeof fetch; now?: () => D
 
 	return function autoModeSimple(pi: HostApi): void {
 		let enabled = true;
-		let lastDecision = "";
 		const cache = new Map<string, { danger: number; top: string }>();
 		// toolCallId -> decision note, consumed by the matching tool_result.
 		const notes = new Map<string, string>();
@@ -328,15 +326,7 @@ export function createAutoModeSimple(deps: { fetch?: typeof fetch; now?: () => D
 			}
 		};
 
-		const showStatus = (ctx: HostContext) => {
-			if (!ctx.hasUI) return;
-			const text = (enabled ? "auto: on" : "auto: off") + (lastDecision ? ` · ${lastDecision}` : "");
-			ctx.ui?.setStatus?.("automode", text);
-		};
-
-		const record = (ctx: HostContext, event: ToolCallEvent, status: string, note: string) => {
-			lastDecision = `${event.toolName} ${status}`;
-			showStatus(ctx);
+		const record = (event: ToolCallEvent, note: string) => {
 			if (!event.toolCallId) return;
 			if (notes.size >= CACHE_LIMIT) notes.delete(notes.keys().next().value as string);
 			notes.set(event.toolCallId, note);
@@ -352,7 +342,6 @@ export function createAutoModeSimple(deps: { fetch?: typeof fetch; now?: () => D
 
 		const restore = (_event: unknown, ctx: HostContext) => {
 			enabled = restoreEnabled(sessionEntries(ctx));
-			showStatus(ctx);
 		};
 		for (const name of ["session_start", "session_switch", "session_branch", "session_tree"]) pi.on(name, restore);
 
@@ -364,7 +353,6 @@ export function createAutoModeSimple(deps: { fetch?: typeof fetch; now?: () => D
 				if (arg === "on" || arg === "off") {
 					enabled = arg === "on";
 					pi.appendEntry(STATE_ENTRY, { enabled });
-					showStatus(ctx);
 					msg = `Auto mode ${arg}.`;
 				} else if (arg === "" || arg === "status") {
 					msg = enabled
@@ -429,7 +417,7 @@ export function createAutoModeSimple(deps: { fetch?: typeof fetch; now?: () => D
 						entry.top = result.top;
 						if (result.danger < DANGER_THRESHOLD) {
 							log({ ...entry, outcome: "allow" });
-						record(ctx, event, `allowed · risk ${pct(result.danger)}`, formatDecision("allowed", "", result.danger));
+						record(event, formatDecision("allowed", "", result.danger));
 							return undefined;
 						}
 						why = `Jev danger ${result.danger.toFixed(2)} (top: ${result.top})`;
@@ -465,13 +453,10 @@ export function createAutoModeSimple(deps: { fetch?: typeof fetch; now?: () => D
 			}
 			log({ ...entry, outcome: confirmed ? "confirmed" : "declined" });
 			const danger = typeof entry.danger === "number" ? entry.danger : undefined;
-			const risk = danger === undefined ? "" : ` · risk ${pct(danger)}`;
 			if (confirmed) {
-				record(ctx, event, `confirmed${risk}`, formatDecision("confirmed by user", why, danger, entry.top as string | undefined));
+				record(event, formatDecision("confirmed by user", why, danger, entry.top as string | undefined));
 				return undefined;
 			}
-			lastDecision = `${tool} declined${risk}`;
-			showStatus(ctx);
 			return { block: true, reason: `Blocked by auto-mode-simple: user declined (${why})` };
 		});
 	};

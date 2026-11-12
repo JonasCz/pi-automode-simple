@@ -58,7 +58,6 @@ In Pi, install the package or point your extension settings at `extensions/auto-
 
 ## Seeing decisions
 
-- The status row shows the state and the latest decision, e.g. `auto: on · bash allowed · risk 5%`.
 - Each allowed or confirmed gated call gets one line appended to its tool result, e.g. `[auto-mode] allowed · Jev risk 5% · confidence 95%`. The line is visible in the tool box and is also seen by the model.
 - Blocked calls show the reason, including the Jev score, as the tool error.
 
