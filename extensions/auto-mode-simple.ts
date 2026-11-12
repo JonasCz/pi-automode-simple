@@ -75,7 +75,7 @@ const TIMEOUT_MS = 12_000;
 const CACHE_LIMIT = 200;
 const CLASSIFIED_TOOLS = new Set(["bash", "eval", "terminal"]);
 const GATED_TOOLS = new Set([...CLASSIFIED_TOOLS, "computer"]);
-const RULES_FILES = [".agent/auto-mode-classifer-rules.md", ".agent/auto-mode-classifier-rules.md"];
+const RULES_FILE = ".agent/auto-mode-classifier-rules.md";
 
 export const JEV_QUESTIONS: Record<string, { type: "noul"; instructions: string }> = {
 	is_dangerous: {
@@ -192,14 +192,11 @@ export function extractUserContext(entries: SessionEntry[]): { userMessages: str
 }
 
 export function readProjectRules(cwd: string): string {
-	for (const name of RULES_FILES) {
-		try {
-			return redactSecrets(truncate(readFileSync(join(cwd, name), "utf8"), 6000));
-		} catch {
-			// try the next name
-		}
+	try {
+		return redactSecrets(truncate(readFileSync(join(cwd, RULES_FILE), "utf8"), 6000));
+	} catch {
+		return "";
 	}
-	return "";
 }
 
 export interface JevState {

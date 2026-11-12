@@ -139,12 +139,11 @@ describe("buildJevState / buildJevBody", () => {
 		}
 	});
 
-	it("reads the project rules file (typo name first, then correct spelling)", () => {
+	it("reads only the correctly spelled project rules file, truncated", () => {
 		const typo = mkdtempSync(join(tmp, "typo-"));
 		mkdirSync(join(typo, ".agent"));
 		writeFileSync(join(typo, ".agent", "auto-mode-classifer-rules.md"), "never push");
-		writeFileSync(join(typo, ".agent", "auto-mode-classifier-rules.md"), "other");
-		assert.equal(buildJevState({ tool: "bash", action: "x", cwd: typo, entries: [] }).project_rules, "never push");
+		assert.equal(buildJevState({ tool: "bash", action: "x", cwd: typo, entries: [] }).project_rules, "");
 
 		const correct = mkdtempSync(join(tmp, "correct-"));
 		mkdirSync(join(correct, ".agent"));

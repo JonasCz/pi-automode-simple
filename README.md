@@ -34,7 +34,7 @@ The setting is saved in the session and restored when you resume it.
 
 ## Project rules
 
-If `.agent/auto-mode-classifer-rules.md` exists in the working directory (`.agent/auto-mode-classifier-rules.md` also works), its first 6,000 characters are sent to Jev as `project_rules`. Use it for instructions like "never push to main" or "never touch the production database".
+If `.agent/auto-mode-classifier-rules.md` exists in the working directory, its first 6,000 characters are sent to Jev as `project_rules`. Use it for instructions like "never push to main" or "never touch the production database".
 
 This file is repo-controlled text. It can make Jev stricter, but it can also argue Jev into allowing things. Treat it as trusted only in repositories you trust.
 
