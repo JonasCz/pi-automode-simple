@@ -57,6 +57,12 @@ export interface ToolCallEvent {
 
 export type ToolCallResult = { block: true; reason: string } | undefined;
 
+export interface ToolResultEvent {
+	toolName: string;
+	toolCallId?: string;
+	content?: unknown;
+}
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -260,6 +266,19 @@ export function restoreEnabled(entries: SessionEntry[]): boolean {
 	return true;
 }
 
+const pct = (p: number) => `${Math.round(p * 100)}%`;
+
+/** One-line decision note appended to the tool result, e.g. "[auto-mode] allowed · Jev risk 5% · confidence 95%". */
+export function formatDecision(outcome: "allowed" | "confirmed by user", why: string, danger?: number, top?: string): string {
+	const parts = [`[auto-mode] ${outcome}`];
+	if (danger === undefined) parts.push(why);
+	else {
+		parts.push(`Jev risk ${pct(danger)}`, `confidence ${pct(1 - danger)}`);
+		if (outcome !== "allowed" && top) parts.push(`top: ${top}`);
+	}
+	return parts.join(" · ");
+}
+
 export function defaultLogPath(): string {
 	if (process.env.AUTOMODE_SIMPLE_LOG) return process.env.AUTOMODE_SIMPLE_LOG;
 	const omp = join(homedir(), ".omp", "agent");
@@ -299,7 +318,10 @@ export function createAutoModeSimple(deps: { fetch?: typeof fetch; now?: () => D
 
 	return function autoModeSimple(pi: HostApi): void {
 		let enabled = true;
+		let lastDecision = "";
 		const cache = new Map<string, { danger: number; top: string }>();
+		// toolCallId -> decision note, consumed by the matching tool_result.
+		const notes = new Map<string, string>();
 
 		const log = (fields: Record<string, unknown>) => {
 			try {
@@ -310,8 +332,26 @@ export function createAutoModeSimple(deps: { fetch?: typeof fetch; now?: () => D
 		};
 
 		const showStatus = (ctx: HostContext) => {
-			if (ctx.hasUI) ctx.ui?.setStatus?.("automode", enabled ? "auto: on" : "auto: off");
+			if (!ctx.hasUI) return;
+			const text = (enabled ? "auto: on" : "auto: off") + (lastDecision ? ` · ${lastDecision}` : "");
+			ctx.ui?.setStatus?.("automode", text);
 		};
+
+		const record = (ctx: HostContext, event: ToolCallEvent, status: string, note: string) => {
+			lastDecision = `${event.toolName} ${status}`;
+			showStatus(ctx);
+			if (!event.toolCallId) return;
+			if (notes.size >= CACHE_LIMIT) notes.delete(notes.keys().next().value as string);
+			notes.set(event.toolCallId, note);
+		};
+
+		pi.on("tool_result", (event: ToolResultEvent) => {
+			const note = event.toolCallId ? notes.get(event.toolCallId) : undefined;
+			if (!note || !GATED_TOOLS.has(event.toolName)) return undefined;
+			notes.delete(event.toolCallId!);
+			const content = Array.isArray(event.content) ? event.content : [];
+			return { content: [...content, { type: "text", text: note }] };
+		});
 
 		const restore = (_event: unknown, ctx: HostContext) => {
 			enabled = restoreEnabled(sessionEntries(ctx));
@@ -392,6 +432,7 @@ export function createAutoModeSimple(deps: { fetch?: typeof fetch; now?: () => D
 						entry.top = result.top;
 						if (result.danger < DANGER_THRESHOLD) {
 							log({ ...entry, outcome: "allow" });
+						record(ctx, event, `allowed · risk ${pct(result.danger)}`, formatDecision("allowed", "", result.danger));
 							return undefined;
 						}
 						why = `Jev danger ${result.danger.toFixed(2)} (top: ${result.top})`;
@@ -426,7 +467,14 @@ export function createAutoModeSimple(deps: { fetch?: typeof fetch; now?: () => D
 				confirmed = false;
 			}
 			log({ ...entry, outcome: confirmed ? "confirmed" : "declined" });
-			if (confirmed) return undefined;
+			const danger = typeof entry.danger === "number" ? entry.danger : undefined;
+			const risk = danger === undefined ? "" : ` · risk ${pct(danger)}`;
+			if (confirmed) {
+				record(ctx, event, `confirmed${risk}`, formatDecision("confirmed by user", why, danger, entry.top as string | undefined));
+				return undefined;
+			}
+			lastDecision = `${tool} declined${risk}`;
+			showStatus(ctx);
 			return { block: true, reason: `Blocked by auto-mode-simple: user declined (${why})` };
 		});
 	};

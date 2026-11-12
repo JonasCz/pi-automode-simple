@@ -208,6 +208,7 @@ interface Harness {
 	ctx: HostContext;
 	toolCall(toolName: string, input: unknown): Promise<unknown>;
 	fire(event: string): Promise<void>;
+	toolResult(toolName: string, content: unknown): Promise<unknown>;
 }
 
 function makeHarness(opts: { hasUI?: boolean; key?: string | undefined; branch?: SessionEntry[] } = {}): Harness {
@@ -260,6 +261,13 @@ function makeHarness(opts: { hasUI?: boolean; key?: string | undefined; branch?:
 		}
 		return result;
 	};
+	h.toolResult = async (toolName, content) => {
+		let result: unknown;
+		for (const handler of h.handlers.get("tool_result") ?? []) {
+			result = await handler({ toolName, toolCallId: "c1", content, isError: false }, h.ctx);
+		}
+		return result;
+	};
 	h.fire = async (event) => {
 		for (const handler of h.handlers.get(event) ?? []) await handler({}, h.ctx);
 	};
@@ -299,6 +307,41 @@ describe("tool_call hook", () => {
 		assert.equal(body.state.action, "npm test");
 		assert.deepEqual(body.state.user_messages, ["run the tests"]);
 		assert.ok(init.signal instanceof AbortSignal);
+	});
+
+	it("appends the Jev decision to the tool result and shows it in the status", async () => {
+		const h = makeHarness();
+		h.responses.push({ status: 200, body: danger(0.05) });
+		await h.toolCall("bash", { command: "ls" });
+		assert.match(String(h.statuses.at(-1)), /auto: on · bash allowed · risk 5%/);
+		const out = (await h.toolResult("bash", [{ type: "text", text: "a\nb" }])) as { content: unknown[] };
+		assert.deepEqual(out.content, [
+			{ type: "text", text: "a\nb" },
+			{ type: "text", text: "[auto-mode] allowed · Jev risk 5% · confidence 95%" },
+		]);
+		assert.equal(await h.toolResult("bash", [{ type: "text", text: "again" }]), undefined, "consumed once");
+	});
+
+	it("reports user confirmation with the Jev score", async () => {
+		const h = makeHarness();
+		h.responses.push({ status: 200, body: danger(0.72) });
+		await h.toolCall("bash", { command: "rm -rf build" });
+		const out = (await h.toolResult("bash", [])) as { content: Array<{ text: string }> };
+		assert.equal(out.content.at(-1)?.text, "[auto-mode] confirmed by user · Jev risk 72% · confidence 28% · top: is_dangerous");
+	});
+
+	it("reports confirmation without a score when auto mode is off", async () => {
+		const h = makeHarness();
+		await h.commands.get("automode")!("off", h.ctx);
+		await h.toolCall("bash", { command: "ls" });
+		const out = (await h.toolResult("bash", [])) as { content: Array<{ text: string }> };
+		assert.equal(out.content.at(-1)?.text, "[auto-mode] confirmed by user · auto mode is off");
+	});
+
+	it("leaves results of non-gated tools alone", async () => {
+		const h = makeHarness();
+		await h.toolCall("read", { path: "a" });
+		assert.equal(await h.toolResult("read", [{ type: "text", text: "x" }]), undefined);
 	});
 
 	it("caches successful results", async () => {
@@ -412,13 +455,13 @@ describe("/automode command", () => {
 		assert.equal(h.fetchCalls.length, 0);
 		assert.equal(h.confirms.length, 1);
 		assert.match(h.confirms[0].message, /auto mode is off/);
-		assert.equal(h.statuses.at(-1), "auto: off");
+		assert.match(String(h.statuses.at(-1)), /^auto: off/);
 
 		await h.commands.get("automode")!("on", h.ctx);
 		assert.equal(await h.toolCall("bash", { command: "ls" }), undefined);
 		assert.equal(h.fetchCalls.length, 1);
 		assert.equal(h.confirms.length, 1);
-		assert.equal(h.statuses.at(-1), "auto: on");
+		assert.match(String(h.statuses.at(-1)), /^auto: on/);
 	});
 
 	it("persists via appendEntry and restores on session_start", async () => {
@@ -428,14 +471,14 @@ describe("/automode command", () => {
 
 		const fresh = makeHarness({ branch: h.branch });
 		await fresh.fire("session_start");
-		assert.equal(fresh.statuses.at(-1), "auto: off");
+		assert.match(String(fresh.statuses.at(-1)), /^auto: off/);
 		await fresh.toolCall("bash", { command: "ls" });
 		assert.equal(fresh.fetchCalls.length, 0);
 		assert.equal(fresh.confirms.length, 1);
 
 		fresh.branch = [];
 		await fresh.fire("session_switch");
-		assert.equal(fresh.statuses.at(-1), "auto: on");
+		assert.match(String(fresh.statuses.at(-1)), /^auto: on/);
 	});
 
 	it("reports status", async () => {
