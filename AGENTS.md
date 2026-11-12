@@ -2,21 +2,20 @@
 
 ## Project overview
 
-This repository is `@czottmann/pi-automode`, a Pi extension package that implements Claude Code-style auto mode guardrails. The extension intercepts Pi agent tool calls before execution and blocks actions through permission rules, deterministic hard-deny checks, protected-path handling, and an LLM classifier.
+This repository is `pi-automode-simple`, a Pi / oh-my-pi (omp) extension that gates `bash`, `eval`, `terminal`, and `computer` tool calls. It asks the Jev decision model on OpenRouter for a danger score and requires user confirmation for risky calls, classifier errors, and every gated call while auto mode is off.
 
 This is not a sandbox. Do not describe it as one.
 
 ## Important files
 
-- `extensions/auto-mode.ts` — main extension implementation and exported testable helpers.
-- `tests/auto-mode.test.ts` — Node test suite for config merging, permission matching, hard-deny checks, classifier parsing, and hook behavior.
-- `examples/automode.local.json` — example user/project-local configuration.
-- `README.md` — user-facing documentation and install/config reference.
-- `package.json` — npm package metadata, Pi manifest, scripts, peer/dev dependencies.
+- `extensions/auto-mode-simple.ts`: the whole extension. Default export is the extension factory. Pure helpers and `createAutoModeSimple({ fetch })` are exported for tests.
+- `tests/auto-mode-simple.test.ts`: Node test suite (`node:test`, `node:assert/strict`).
+- `README.md`: user-facing documentation.
+- `package.json`: package metadata, Pi manifest, scripts, dev dependencies.
 
 ## Issue tracking
 
-Track issues in [GitHub](https://github.com/czottmann/pi-automode/issues). Use the `gh` CLI for issue operations.
+Track issues in GitHub. Use the `gh` CLI for issue operations.
 
 GitHub Issues has no `Draft` state. Create captured tickets as open issues and state that they are Drafts in the description.
 
@@ -37,72 +36,61 @@ For package/release-sensitive changes, also run:
 npm pack --dry-run
 ```
 
-`npm run build` is currently an alias for TypeScript no-emit checking.
-
 ## Coding conventions
 
-- TypeScript is strict, ESM, NodeNext (`tsconfig.json`).
-- Keep code simple and explicit. Avoid abstractions unless multiple call sites justify them.
-- Prefer exported pure helpers for logic that needs tests.
-- Keep deterministic hard-deny logic independent from classifier behavior where possible.
-- Fail closed for safety decisions: missing classifier, invalid classifier output, or hook errors should block rather than allow risky actions.
-- Preserve Pi tool names in lowercase in docs and config examples: `bash(...)`, `write(...)`, `edit(...)`, `read(...)`, `find(...)`, `ls(...)`.
-- Do not add runtime dependencies unless necessary. Pi core imports belong in `peerDependencies` with `"*"`; development versions belong in `devDependencies`.
+- TypeScript is strict, ESM, NodeNext (`tsconfig.json`). Tab indentation.
+- Keep everything in one small, explicit file. Avoid abstractions.
+- No runtime dependencies. Do not import host packages (`@earendil-works/*`, `@oh-my-pi/*`); the host API is described by minimal local interfaces so the extension loads in both Pi and omp.
+- Keep extension state (enabled flag, cache) inside the `createAutoModeSimple()` closure, not at module level.
+- Fail closed: missing API key, network errors, timeouts, non-2xx responses, missing or malformed answers, and hook exceptions must lead to user confirmation, or a block when there is no UI. Never allow on error.
+
+## Hook behavior
+
+`tool_call` handling, in order:
+
+1. Tools other than `bash`, `eval`, `terminal`, `computer`: return `undefined` (untouched).
+2. Turn already aborted: block with `Cancelled`.
+3. Auto mode off, or tool is `computer`: ask the user (no Jev call).
+4. Otherwise ask Jev. Danger `< 0.35`: allow. Danger `>= 0.35` or error: ask the user.
+5. Asking: no UI blocks; confirmed allows; declined or a rejected confirm blocks.
 
 ## Testing expectations
 
 Use red/green TDD for behavior changes: first add or update a test that demonstrates the missing behavior, then implement the smallest passing change.
 
-When changing guardrail behavior, add or update tests in `tests/auto-mode.test.ts` for:
-
-- config precedence and diagnostics;
-- permission pattern parsing/matching;
-- deterministic hard-deny checks;
-- protected-path behavior, including symlinks or cross-project paths when relevant;
-- classifier decision parsing and fail-closed behavior;
-- `tool_call` hook ordering: permissions first, deterministic hard-deny second, read-only bypass, classifier last.
-
-Bug fixes to blocking/allowing behavior need tests that prove the observed behavior is fixed.
+Tests inject `fetch` and must not touch the network, the user's `OPENROUTER_API_KEY`, or the real log file (set `AUTOMODE_SIMPLE_LOG`). Bug fixes to blocking/allowing behavior need tests that prove the observed behavior is fixed.
 
 ## Safety rules for this repo
 
 This project is itself a safety-control extension. Treat these areas as high risk:
 
-- hard-deny rules and deterministic checks;
-- config-source precedence, especially shared project `.pi/automode.json` not weakening `autoMode`;
-- classifier prompt semantics;
-- protected-path matching;
-- shell parsing and command classification;
-- permission deny/ask handling.
+- the set of gated tools and the danger threshold;
+- fail-closed handling of classifier errors and hook exceptions;
+- Jev question wording and the state sent to Jev;
+- which conversation content counts as trusted user input (user messages and `ask` answers only, never other tool output);
+- on/off persistence and restore.
 
-Do not weaken safety behavior, broaden allow rules, or bypass classifier checks without explicit user direction and tests. Changes to docs must not imply guarantees the extension does not provide.
+Do not weaken safety behavior, add allow shortcuts, or bypass the classifier without explicit user direction and tests. Changes to docs must not imply guarantees the extension does not provide.
 
-## Pi extension/package references
+## Pi extension references
 
-Before editing Pi extension APIs, command/UI behavior, tool hooks, package metadata, or package install behavior, consult the installed Pi docs:
-
-- `docs/extensions.md`
-- `docs/packages.md`
-- relevant files under `examples/extensions/`
-
-Key Pi API constraints used by this project:
+Key host API constraints used by this project:
 
 - `tool_call` can block by returning `{ block: true, reason }`.
-- `event.input` is mutable, but this extension should generally classify the requested action rather than mutate it.
-- Use `ctx.hasUI`/`ctx.mode` before UI-only behavior.
-- Use `ctx.signal` for nested model calls or async work during active turns.
-- `pi.appendEntry()` persists extension state outside LLM context; restore from `ctx.sessionManager` on `session_start`.
+- Classify the requested action; do not mutate `event.input`.
+- Check `ctx.hasUI` before UI-only behavior.
+- Pass `ctx.signal` to nested requests and confirmations.
+- `pi.appendEntry()` persists extension state outside LLM context; restore from `ctx.sessionManager.getBranch()` on `session_start`.
 
 ## Documentation rules
 
-- Keep `README.md` user-facing and concrete.
+- Keep `README.md` user-facing, concrete, and short.
 - Keep security wording precise: this extension reduces unsafe autonomous tool use; it is not an OS-level security boundary.
-- When adding config examples, include `$defaults` unless the example is intentionally demonstrating replacement behavior.
-- Keep command lists and examples in sync with `extensions/auto-mode.ts`.
+- Keep the command list in sync with `extensions/auto-mode-simple.ts`.
 
 ## Git hygiene
 
 - Check `git status --short` before committing or making broad edits.
 - Do not overwrite unrelated user changes.
-- Do not edit `.env` files or local Pi auto-mode config unless explicitly asked.
+- Do not edit `.env` files or local Pi/omp config unless explicitly asked.
 - Commit only when explicitly asked.

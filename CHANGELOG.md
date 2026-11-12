@@ -4,6 +4,16 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-11-12
+
+## Breaking changes
+
+- **Rewrite as `pi-automode-simple`** — Replace the permission rules, hard-deny checks, protected paths, and LLM classifier with one rule: ask the Jev decision model on OpenRouter for a danger score. Below `0.35` the call runs; at or above it, or on any error, the user must confirm. Old `automode.json` configuration, diagnostics, and the diagnostics skill are gone.
+- **Gated tools** — Gate `bash`, `eval`, and `terminal` through Jev and always confirm `computer`. All other tools pass through.
+- **On/off** — `/automode on|off|status`. While off, every gated call needs confirmation. The state is saved in the session.
+- **Project rules** — Send `.agent/auto-mode-classifer-rules.md` (or `.agent/auto-mode-classifier-rules.md`) to Jev as project rules.
+- **Pi and omp** — Load in both hosts with no host package imports and no runtime dependencies.
+
 ## [1.18.0] - 2026-11-11
 
 ## Bug fixes
